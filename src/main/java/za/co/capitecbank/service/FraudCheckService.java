@@ -1,0 +1,76 @@
+package za.co.capitecbank.service;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.common.errors.ResourceNotFoundException;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
+import za.co.capitecbank.domain.entity.RuleEntity;
+import za.co.capitecbank.domain.model.FraudOutcome;
+import za.co.capitecbank.domain.repo.CheckRepository;
+import za.co.capitecbank.domain.repo.RuleRepository;
+import za.co.capitecbank.dto.FraudCheckResponse;
+import za.co.capitecbank.dto.TransactionEventDto;
+import za.co.capitecbank.mapper.FraudCheckMapper;
+import za.co.capitecbank.service.evaluator.RuleEvaluator;
+
+import java.util.List;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class FraudCheckService {
+
+    @Value("${fraud-check.high-score-threshold}")
+    private Integer highScoreThreshold;
+
+    @Value("${fraud-check.medium-score-threshold}")
+    private  Integer mediumScoreThreshold;
+
+    private final List<RuleEvaluator> evaluators;
+    private final RuleRepository ruleRepository;
+    private final CheckRepository checkRepository;
+
+    public FraudCheckResponse performCheck(TransactionEventDto request){
+        List<RuleEntity> activeRules = ruleRepository.findByActiveTrue();
+
+        int totalScore = 0;
+
+        for (RuleEntity rule : activeRules) {
+            RuleEvaluator evaluator = evaluators.stream()
+                    .filter(e -> e.supports(rule.getEvalMode(), rule.getRuleType()))
+                    .findFirst()
+                    .orElse(null);
+
+            if (evaluator == null) {
+                log.warn("No evaluator for evalMode={} ruleType={}", rule.getEvalMode(), rule.getRuleType());
+                continue;
+            }
+
+            totalScore += evaluator.evaluate(rule, request);
+            log.atDebug().addKeyValue("Transaction-Id", request.transactionId())
+                    .log("Rule [{}] for transactionID [{}] evaluated to [{}]",
+                    rule.getName(), request.transactionId() ,totalScore);
+        }
+
+        int cappedScore = Math.min(totalScore, 100);
+        FraudOutcome outcome = calculateOutcome(cappedScore);
+        FraudCheckRequestEntity fraudCheckRequest = checkRepository.save(FraudCheckMapper.buildFraudCheckRequestEntity(request, outcome, cappedScore));
+        return FraudCheckMapper.buildFraudCheckResponse(fraudCheckRequest);
+    }
+
+    public FraudCheckResponse findCheckResults(final String transactionId) {
+        return this.checkRepository.findByTransactionId(transactionId)
+                .map(FraudCheckMapper::buildFraudCheckResponse)
+                .orElseThrow(() ->new ResourceNotFoundException("No fraud check found for transactionId: " + transactionId));
+    }
+
+    private FraudOutcome calculateOutcome(int totalScore){
+       if (totalScore >= highScoreThreshold) return FraudOutcome.HIGH;
+       if (totalScore > mediumScoreThreshold) return FraudOutcome.MEDIUM;
+       return FraudOutcome.LOW;
+    }
+
+
+}

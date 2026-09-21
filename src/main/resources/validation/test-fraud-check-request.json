@@ -1,0 +1,14 @@
+{
+  "transactionId": "DRY_RUN",
+  "amount": 1,
+  "currency": "ZAR",
+  "accountId": "ACC000",
+  "merchantId": "MER000",
+  "transactionType": "WITHDRAWAL",
+  "transactionTimestamp": "2026-01-01T08:00:00Z",
+  "country": "ZA",
+  "city": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "ipAddress": "127.0.0.1"
+}
