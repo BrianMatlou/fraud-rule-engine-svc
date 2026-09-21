@@ -20,6 +20,7 @@ import lombok.Setter;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import za.co.capitecbank.domain.model.FraudOutcome;
+import za.co.capitecbank.domain.model.TransactionType;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -52,7 +53,7 @@ public class FraudCheckRequestEntity {
 
     @CreatedBy
     @Column(nullable = false, updatable = false)
-    private UUID createdBy;
+    private String createdBy;
 
     @Enumerated(EnumType.STRING)
     private FraudOutcome outcome;

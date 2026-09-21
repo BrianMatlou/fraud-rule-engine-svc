@@ -20,6 +20,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import za.co.capitecbank.domain.model.EvalMode;
 import za.co.capitecbank.domain.model.RuleType;
 
 import java.time.OffsetDateTime;
@@ -46,9 +47,12 @@ public class RuleEntity {
 
     private String description;
 
+    @Column(nullable = false)
+    private String ruleType;
+
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, unique = true)
-    private RuleType ruleType;
+    @Column(nullable = false)
+    private EvalMode evalMode;
 
     @Column(nullable = false)
     private Integer riskScoreImpact;
@@ -62,7 +66,7 @@ public class RuleEntity {
 
     @CreatedBy
     @Column(nullable = false, updatable = false)
-    private UUID createdBy;
+    private String createdBy;
 
     private OffsetDateTime createdDateTime;
 

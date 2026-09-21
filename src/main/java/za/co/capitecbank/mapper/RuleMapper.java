@@ -20,6 +20,7 @@ public class RuleMapper {
                 .name(request.name())
                 .description(request.description())
                 .ruleType(request.ruleType())
+                .evalMode(request.evalMode())
                 .riskScoreImpact(request.riskScoreImpact())
                 .active(true)
                 .conditions(toConditionsString(request.conditions()))
@@ -32,6 +33,7 @@ public class RuleMapper {
                 entity.getName(),
                 entity.getDescription(),
                 entity.getRuleType(),
+                entity.getEvalMode(),
                 entity.getRiskScoreImpact(),
                 entity.getActive(),
                 toConditionsNode(entity.getConditions()),
