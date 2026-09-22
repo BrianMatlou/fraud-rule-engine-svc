@@ -44,6 +44,10 @@ public class RuleService {
         RuleEntity entity = ruleRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Rule not found: " + id));
 
+        if (request.conditions() != null) {
+            validator.validate(request.conditions(), entity.getEvalMode(), entity.getRuleType());
+        }
+
         if (request.name() != null) entity.setName(request.name());
         if (request.description() != null) entity.setDescription(request.description());
         if (request.riskScoreImpact() != null) entity.setRiskScoreImpact(request.riskScoreImpact());

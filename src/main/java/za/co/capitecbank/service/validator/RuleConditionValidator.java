@@ -33,24 +33,27 @@ public class RuleConditionValidator {
     private final SpelExpressionParser spelExpressionParser = new SpelExpressionParser();
 
     public void validate(CreateRuleRequestDto request) {
+        validate(request.conditions(), request.evalMode(), request.ruleType());
+    }
 
-        if (request.evalMode() == EvalMode.EVALUATOR) {
+    public void validate(JsonNode conditions, EvalMode evalMode, String ruleType) {
+
+        if (evalMode == EvalMode.EVALUATOR) {
             boolean hasEvaluator = evaluators != null && evaluators.stream()
-                    .anyMatch(e -> e.supports(EvalMode.EVALUATOR, request.ruleType()));
+                    .anyMatch(e -> e.supports(EvalMode.EVALUATOR, ruleType));
             if (!hasEvaluator) {
                 throw new IllegalStateException(
-                        "No evaluator registered for ruleType: " + request.ruleType()
+                        "No evaluator registered for ruleType: " + ruleType
                 );
             }
             return;
         }
 
-
-        if (request.conditions().isNull()) {
+        if (conditions == null || conditions.isNull()) {
             throw new IllegalStateException("Conditions expression must be provided for SpEL rules");
         }
 
-        JsonNode expressionNode = request.conditions().get("expression");
+        JsonNode expressionNode = conditions.get("expression");
         if (expressionNode == null) {
             throw new IllegalStateException("SpEL rules require a non-blank 'expression' key in conditions");
         }
@@ -71,10 +74,8 @@ public class RuleConditionValidator {
         } catch (ParseException exception) {
             throw new IllegalStateException("Invalid expression in conditions: " + exception.getSimpleMessage(), exception);
         } catch (EvaluationException exception) {
-            throw new IllegalStateException("\"Expression references unknown field or has a type error: " + exception.getSimpleMessage(), exception);
+            throw new IllegalStateException("Expression references unknown field or has a type error: " + exception.getSimpleMessage(), exception);
         }
-
-
     }
 
     private TransactionEventDto buildTestRequest() {

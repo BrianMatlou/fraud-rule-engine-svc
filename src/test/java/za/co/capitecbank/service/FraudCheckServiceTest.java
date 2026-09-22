@@ -1,6 +1,6 @@
 package za.co.capitecbank.service;
 
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import za.co.capitecbank.domain.model.exception.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -186,7 +186,7 @@ class FraudCheckServiceTest {
         when(checkRepository.findByTransactionId("tx-missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.findCheckResults("tx-missing"))
-                .isInstanceOf(ResourceNotFoundException.class)
+                .isInstanceOf(EntityNotFoundException.class)
                 .hasMessageContaining("tx-missing");
     }
 
