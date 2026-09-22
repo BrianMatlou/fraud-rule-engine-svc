@@ -4,7 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import tools.jackson.databind.JsonNode;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.RuleType;
 
 
 public record CreateRuleRequestDto(

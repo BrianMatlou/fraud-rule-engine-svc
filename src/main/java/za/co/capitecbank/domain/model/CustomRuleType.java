@@ -5,9 +5,7 @@ import lombok.Getter;
 
 @Getter
 @AllArgsConstructor
-public enum RuleType {
-    AMOUNT_THRESHOLD(EvalMode.SPEL),
-    COUNTRY_BLACKLIST(EvalMode.SPEL),
+public enum CustomRuleType {
     VELOCITY(EvalMode.EVALUATOR),
     IMPOSSIBLE_TRAVEL(EvalMode.EVALUATOR);
 
