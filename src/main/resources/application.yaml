@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: transaction-fraud-check
+
+  datasource:
+    url: ${DATASOURCE_URL}
+    username: ${DATASOURCE_USERNAME}
+    password: ${DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    consumer:
+      group-id: transaction-fraud-engine
+      auto-offset-reset: earliest
+      key-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.key.delegate.class: org.apache.kafka.common.serialization.StringDeserializer
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: "za.co.capitecbank.dto"
+        spring.json.value.default.type: "za.co.capitecbank.dto.TransactionEventDto"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OAUTH2_ISSUER_URI}
+
+fraud-check:
+  high-score-threshold: 100
+  medium-score-threshold: 50
+  kafka:
+    topic: transaction-events
+    dead-letter-topic: transaction-events-dlt
+
+  rate-limit:
+    fraud-check:
+      capacity: 100
+      refill-tokens: 100
+      refill-period-seconds: 60
+    rules:
+      capacity: 100
+      refill-tokens: 50
+      refill-period-seconds: 60
+
+logging:
+  level:
+    za.co.capitecbank: debug

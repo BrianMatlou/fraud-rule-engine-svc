@@ -21,7 +21,6 @@ import lombok.Setter;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.RuleType;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -34,7 +33,7 @@ import static java.time.ZoneOffset.UTC;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Table(name = "fraud_check_request")
+@Table(name = "fraud_rule")
 @EntityListeners(AuditingEntityListener.class)
 public class RuleEntity {
 
@@ -77,6 +76,10 @@ public class RuleEntity {
         this.createdDateTime = OffsetDateTime.now(UTC);
         if (this.active == null) {
             this.active = true;
+        }
+
+        if (this.updatedDateTime == null) {
+            this.updatedDateTime = this.createdDateTime;
         }
     }
 
