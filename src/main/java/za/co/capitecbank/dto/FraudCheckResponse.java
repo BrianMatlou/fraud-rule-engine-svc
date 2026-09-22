@@ -4,6 +4,7 @@ import lombok.Builder;
 import za.co.capitecbank.domain.model.FraudOutcome;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Builder
@@ -12,6 +13,6 @@ public record FraudCheckResponse(
     String transactionId,
     FraudOutcome outcome,
     Integer riskScore,
-    String reason,
+    List<String> reasons,
     OffsetDateTime checkedAt
 ) {}

@@ -2,7 +2,6 @@ package za.co.capitecbank.dto;
 
 import tools.jackson.databind.JsonNode;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.RuleType;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;

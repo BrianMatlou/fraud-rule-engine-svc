@@ -2,7 +2,7 @@ package za.co.capitecbank.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
+import za.co.capitecbank.domain.model.exception.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
@@ -36,6 +36,7 @@ public class FraudCheckService {
         List<RuleEntity> activeRules = ruleRepository.findByActiveTrue();
 
         int totalScore = 0;
+        List<String> reasons = new java.util.ArrayList<>();
 
         for (RuleEntity rule : activeRules) {
             RuleEvaluator evaluator = evaluators.stream()
@@ -48,7 +49,11 @@ public class FraudCheckService {
                 continue;
             }
 
-            totalScore += evaluator.evaluate(rule, request);
+            int scoreContribution = evaluator.evaluate(rule, request);
+            if (scoreContribution > 0) {
+                reasons.add(rule.getName());
+            }
+            totalScore += scoreContribution;
             log.atDebug().addKeyValue("Transaction-Id", request.transactionId())
                     .log("Rule [{}] for transactionID [{}] evaluated to [{}]",
                     rule.getName(), request.transactionId() ,totalScore);
@@ -56,14 +61,14 @@ public class FraudCheckService {
 
         int cappedScore = Math.min(totalScore, 100);
         FraudOutcome outcome = calculateOutcome(cappedScore);
-        FraudCheckRequestEntity fraudCheckRequest = checkRepository.save(FraudCheckMapper.buildFraudCheckRequestEntity(request, outcome, cappedScore));
+        FraudCheckRequestEntity fraudCheckRequest = checkRepository.save(FraudCheckMapper.buildFraudCheckRequestEntity(request, outcome, cappedScore, reasons));
         return FraudCheckMapper.buildFraudCheckResponse(fraudCheckRequest);
     }
 
     public FraudCheckResponse findCheckResults(final String transactionId) {
         return this.checkRepository.findByTransactionId(transactionId)
                 .map(FraudCheckMapper::buildFraudCheckResponse)
-                .orElseThrow(() ->new ResourceNotFoundException("No fraud check found for transactionId: " + transactionId));
+                .orElseThrow(() -> new EntityNotFoundException("No fraud check found for transactionId: " + transactionId));
     }
 
     private FraudOutcome calculateOutcome(int totalScore){

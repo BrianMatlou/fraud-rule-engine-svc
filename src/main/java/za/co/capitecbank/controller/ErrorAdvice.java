@@ -1,7 +1,6 @@
 package za.co.capitecbank.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
-import org.apache.kafka.common.errors.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +10,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.server.ResponseStatusException;
+import za.co.capitecbank.domain.model.exception.EntityNotFoundException;
 import za.co.capitecbank.dto.ErrorResponse;
 
 import java.time.OffsetDateTime;
@@ -46,8 +46,8 @@ public class ErrorAdvice {
         return buildResponse(HttpStatus.FORBIDDEN, "Access denied: insufficient permissions", request);
     }
 
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException ex, HttpServletRequest request) {
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNotFound(EntityNotFoundException ex, HttpServletRequest request) {
         return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage() != null ? ex.getMessage() : "Resource not found", request);
     }
 

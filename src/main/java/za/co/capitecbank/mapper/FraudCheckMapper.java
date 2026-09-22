@@ -7,10 +7,12 @@ import za.co.capitecbank.domain.model.FraudOutcome;
 import za.co.capitecbank.dto.TransactionEventDto;
 import za.co.capitecbank.dto.FraudCheckResponse;
 
+import java.util.List;
+
 @UtilityClass
 public class FraudCheckMapper {
 
-    public FraudCheckRequestEntity buildFraudCheckRequestEntity(TransactionEventDto requestDto, FraudOutcome outcome, int riskScore) {
+    public FraudCheckRequestEntity buildFraudCheckRequestEntity(TransactionEventDto requestDto, FraudOutcome outcome, int riskScore, List<String> reasons) {
         return FraudCheckRequestEntity.builder()
                 .transactionId(requestDto.transactionId())
                 .amount(requestDto.amount())
@@ -26,6 +28,7 @@ public class FraudCheckMapper {
                 .ipAddress(requestDto.ipAddress())
                 .outcome(outcome)
                 .riskScore(riskScore)
+                .reasons(reasons)
                 .build();
     }
 
@@ -35,7 +38,7 @@ public class FraudCheckMapper {
                 .transactionId(entity.getTransactionId())
                 .outcome(entity.getOutcome())
                 .riskScore(entity.getRiskScore())
-                .reason(entity.getReason())
+                .reasons(entity.getReasons())
                 .checkedAt(entity.getCreateDateTime())
                 .build();
     }

@@ -17,13 +17,15 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedBy;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import za.co.capitecbank.domain.model.FraudOutcome;
-import za.co.capitecbank.domain.model.TransactionType;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import static java.time.ZoneOffset.UTC;
@@ -34,7 +36,7 @@ import static java.time.ZoneOffset.UTC;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@Table(name = "fraud_check")
+@Table(name = "fraud_check_request")
 @EntityListeners(AuditingEntityListener.class)
 public class FraudCheckRequestEntity {
 
@@ -83,7 +85,9 @@ public class FraudCheckRequestEntity {
 
     private Integer riskScore;
 
-    private String reason;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "reason", columnDefinition = "jsonb")
+    private List<String> reasons;
 
     private String payload;
 

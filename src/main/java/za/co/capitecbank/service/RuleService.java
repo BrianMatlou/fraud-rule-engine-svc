@@ -10,7 +10,7 @@ import za.co.capitecbank.dto.CreateRuleRequestDto;
 import za.co.capitecbank.dto.RuleResponseDto;
 import za.co.capitecbank.dto.UpdateRuleRequestDto;
 import za.co.capitecbank.mapper.RuleMapper;
-import za.co.capitecbank.service.validator.SpelExpressionValidator;
+import za.co.capitecbank.service.validator.RuleConditionValidator;
 
 import java.util.List;
 import java.util.UUID;
@@ -19,7 +19,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RuleService {
 
-    private final SpelExpressionValidator validator;
+    private final RuleConditionValidator validator;
     private final RuleRepository ruleRepository;
     private final RuleMapper ruleMapper;
 

@@ -21,12 +21,12 @@ import java.util.List;
 
 @Component
 @RequiredArgsConstructor
-public class SpelExpressionValidator {
+public class RuleConditionValidator {
 
     @Value("classpath:validation/test-fraud-check-request.json")
     private Resource testRequest;
 
-    private List<RuleEvaluator> evaluators;
+    private final List<RuleEvaluator> evaluators;
 
     private final ObjectMapper objectMapper;
 
@@ -35,7 +35,7 @@ public class SpelExpressionValidator {
     public void validate(CreateRuleRequestDto request) {
 
         if (request.evalMode() == EvalMode.EVALUATOR) {
-            boolean hasEvaluator = evaluators.stream()
+            boolean hasEvaluator = evaluators != null && evaluators.stream()
                     .anyMatch(e -> e.supports(EvalMode.EVALUATOR, request.ruleType()));
             if (!hasEvaluator) {
                 throw new IllegalStateException(
