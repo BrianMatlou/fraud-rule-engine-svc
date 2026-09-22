@@ -43,8 +43,8 @@ spring:
           issuer-uri: ${OAUTH2_ISSUER_URI}
 
 fraud-check:
-  high-score-threshold: 100
-  medium-score-threshold: 50
+  high-score-threshold: 70
+  medium-score-threshold: 40
   kafka:
     topic: transaction-events
     dead-letter-topic: transaction-events-dlt
