@@ -31,6 +31,10 @@ public class SpelRuleEvaluator implements RuleEvaluator {
     private final ConcurrentMap<UUID, Expression> cachedExpressions = new ConcurrentHashMap<>();
 
 
+    public void evictCache(UUID ruleId) {
+        cachedExpressions.remove(ruleId);
+    }
+
     @Override
     public boolean supports(EvalMode evalMode, String type) {
         return EvalMode.SPEL == evalMode;

@@ -9,7 +9,6 @@ import tools.jackson.databind.ObjectMapper;
 import za.co.capitecbank.domain.entity.RuleEntity;
 import za.co.capitecbank.domain.model.CustomRuleType;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.TransactionType;
 import za.co.capitecbank.domain.repo.CheckRepository;
 import za.co.capitecbank.dto.TransactionEventDto;
 
@@ -53,7 +52,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_returnsRiskScoreImpact_whenTransactionCountMeetsThreshold() {
         RuleEntity rule = velocityRule(40, 60, 5);
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         when(checkRepository.countByAccountIdInWindow(eq("ACC-001"), any(OffsetDateTime.class))).thenReturn(5L);
 
@@ -63,7 +62,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_returnsRiskScoreImpact_whenTransactionCountExceedsThreshold() {
         RuleEntity rule = velocityRule(40, 60, 3);
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         when(checkRepository.countByAccountIdInWindow(eq("ACC-001"), any(OffsetDateTime.class))).thenReturn(10L);
 
@@ -73,7 +72,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_returnsZero_whenTransactionCountBelowThreshold() {
         RuleEntity rule = velocityRule(40, 60, 5);
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         when(checkRepository.countByAccountIdInWindow(eq("ACC-001"), any(OffsetDateTime.class))).thenReturn(2L);
 
@@ -83,7 +82,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_returnsZero_whenTransactionTypeNotInConfiguredScope() {
         RuleEntity rule = velocityRuleWithTypes(40, 60, 3, "ATM_WITHDRAWAL");
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         assertThat(evaluator.evaluate(rule, request)).isZero();
     }
@@ -91,7 +90,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_evaluatesAllTypes_whenTransactionTypeFilterIsAbsent() {
         RuleEntity rule = velocityRule(40, 60, 3);
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.ATM_WITHDRAWAL);
+        TransactionEventDto request = transactionEvent("ACC-001", "ATM_WITHDRAWAL");
 
         when(checkRepository.countByAccountIdInWindow(eq("ACC-001"), any(OffsetDateTime.class))).thenReturn(5L);
 
@@ -101,7 +100,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_throwsIllegalArgumentException_whenWindowMinutesMissing() {
         RuleEntity rule = ruleWithConditions("{\"maxTransactions\": 5}");
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         assertThatThrownBy(() -> evaluator.evaluate(rule, request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -111,7 +110,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_throwsIllegalArgumentException_whenMaxTransactionsMissing() {
         RuleEntity rule = ruleWithConditions("{\"windowMinutes\": 60}");
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         assertThatThrownBy(() -> evaluator.evaluate(rule, request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -122,7 +121,7 @@ class VelocityRuleEvaluatorTest {
     void evaluate_throwsIllegalArgumentException_forInvalidConditionsJson() {
         RuleEntity rule = ruleWithConditions("not-json");
 
-        assertThatThrownBy(() -> evaluator.evaluate(rule, transactionEvent("ACC-001", TransactionType.PURCHASE)))
+        assertThatThrownBy(() -> evaluator.evaluate(rule, transactionEvent("ACC-001", "PURCHASE")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid conditions JSON");
     }
@@ -130,7 +129,7 @@ class VelocityRuleEvaluatorTest {
     @Test
     void evaluate_throwsIllegalArgumentException_whenWindowMinutesIsZero() {
         RuleEntity rule = ruleWithConditions("{\"windowMinutes\": 0, \"maxTransactions\": 5}");
-        TransactionEventDto request = transactionEvent("ACC-001", TransactionType.PURCHASE);
+        TransactionEventDto request = transactionEvent("ACC-001", "PURCHASE");
 
         assertThatThrownBy(() -> evaluator.evaluate(rule, request))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -167,7 +166,7 @@ class VelocityRuleEvaluatorTest {
                 .build();
     }
 
-    private static TransactionEventDto transactionEvent(String accountId, TransactionType type) {
+    private static TransactionEventDto transactionEvent(String accountId, String type) {
         return new TransactionEventDto(
                 "tx-vel-01", new BigDecimal("500.00"), "ZAR",
                 accountId, "MER-001", type,

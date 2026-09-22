@@ -10,7 +10,6 @@ import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
 import za.co.capitecbank.domain.entity.RuleEntity;
 import za.co.capitecbank.domain.model.CustomRuleType;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.TransactionType;
 import za.co.capitecbank.domain.repo.CheckRepository;
 import za.co.capitecbank.dto.TransactionEventDto;
 
@@ -198,7 +197,7 @@ class ImpossibleTravelRuleEvaluatorTest {
     private static TransactionEventDto transactionEvent(String accountId, double lat, double lon, OffsetDateTime ts) {
         return new TransactionEventDto(
                 "tx-travel-01", new BigDecimal("500.00"), "ZAR",
-                accountId, "MER-001", TransactionType.PURCHASE,
+                accountId, "MER-001", "PURCHASE",
                 ts, "ZA", "City", lat, lon, "10.0.0.1"
         );
     }
@@ -206,7 +205,7 @@ class ImpossibleTravelRuleEvaluatorTest {
     private static TransactionEventDto transactionEventNoCoords(String accountId) {
         return new TransactionEventDto(
                 "tx-travel-02", new BigDecimal("100.00"), "ZAR",
-                accountId, "MER-001", TransactionType.PURCHASE,
+                accountId, "MER-001", "PURCHASE",
                 OffsetDateTime.now(), "ZA", "City", null, null, "10.0.0.2"
         );
     }

@@ -73,7 +73,7 @@ public class FraudCheckService {
 
     /** Looks up a previously stored fraud check result by transaction ID. */
     public FraudCheckResponse findCheckResults(final String transactionId) {
-        log.atDebug().addKeyValue(LogKey.TRANSACTION_ID.getKey(), transactionId).log("Looking up fraud check result");
+        log.atDebug().addKeyValue(LogKey.TRANSACTION_ID.getKey(), transactionId).log("Querying fraud check result");
         return this.checkRepository.findByTransactionId(transactionId)
                 .map(FraudCheckMapper::buildFraudCheckResponse)
                 .orElseThrow(() -> new EntityNotFoundException("No fraud check found for transactionId: " + transactionId));

@@ -18,11 +18,17 @@ A production-grade Spring Boot service that processes transaction events, evalua
    - [Create an Evaluator Rule](#create-an-evaluator-rule)
    - [List / Get / Update / Delete Rules](#list--get--update--delete-rules)
 8. [Send Transaction Events via Kafka](#send-transaction-events-via-kafka)
-9. [Fraud Check Results API](#fraud-check-results-api)
-10. [Scoring Logic](#scoring-logic)
-11. [API Reference](#api-reference)
-12. [Testing](#testing)
-13. [Swagger UI](#swagger-ui)
+9. [Simulating Evaluator Tests](#simulating-evaluator-tests)
+   - [Prerequisites](#prerequisites-1)
+   - [SpEL — High Value Transaction](#spel--high-value-transaction)
+   - [Velocity — ATM Burst](#velocity--atm-burst)
+   - [Impossible Travel — Location Jump](#impossible-travel--location-jump)
+   - [Checking Results](#checking-results)
+10. [Fraud Check Results API](#fraud-check-results-api)
+11. [Scoring Logic](#scoring-logic)
+12. [API Reference](#api-reference)
+13. [Testing](#testing)
+14. [Swagger UI](#swagger-ui)
 
 ---
 
@@ -459,7 +465,7 @@ For the examples below, there are four rule types split across two evaluation mo
 | `currency`             | String               | `"ZAR"`                 |
 | `accountId`            | String               | `"acc-001"`             |
 | `merchantId`           | String               | `"merch-xyz"`           |
-| `transactionType`      | TransactionType enum | `PURCHASE`              |
+| `transactionType`      | String               | `"PURCHASE"`            |
 | `transactionTimestamp` | OffsetDateTime       | `2024-01-15T10:30:00Z`  |
 | `country`              | String               | `"ZA"`                  |
 | `city`                 | String               | `"Cape Town"`           |
@@ -504,7 +510,7 @@ curl -s -X POST http://localhost:8080/api/v1/rules/create \
     "evalMode": "SPEL",
     "riskScoreImpact": 40,
     "conditions": {
-      "expression": "transactionType.name() == '\''ATM_WITHDRAWAL'\'' && amount > 10000"
+      "expression": "transactionType == '\''ATM_WITHDRAWAL'\'' && amount > 10000"
     }
   }'
 ```
@@ -747,6 +753,162 @@ echo '{
   "longitude": 18.4241,
   "ipAddress": "196.25.2.50"
 }
+```
+
+---
+
+## Simulating Evaluator Tests
+
+This section shows how to fire each of the three evaluator types end-to-end using `kcat` and the REST API. Run these against a fully started stack with rules already seeded in the database (see [Fraud Rules](#fraud-rules)).
+
+### Prerequisites
+
+Obtain a token (requires `FRAUD_ADMIN` or `FRAUD_ANALYST`):
+
+```bash
+export TOKEN=$(curl -s -X POST http://localhost:9090/realms/capitec/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=fraud-service-client" \
+  -d "client_secret=xWpjsAlEzGQyvpmaH8ssGGji1mLutHDK" \
+  -d "username=brian" \
+  -d "password=admin" \
+  | jq -r '.access_token')
+```
+
+Confirm the rules you want to trigger are active:
+
+```bash
+curl -s http://localhost:8080/api/v1/rules -H "Authorization: Bearer $TOKEN" | jq '.[].name'
+```
+
+> **kcat note (macOS):** kcat sometimes tries IPv6 (`[::1]:9092`) before IPv4, which fails if only IPv4 is bound. If a send exits non-zero, retry immediately — the second attempt typically resolves to IPv4. The loop patterns below retry automatically.
+
+---
+
+### SpEL — High Value Transaction
+
+**What it tests:** a `SPEL` rule with `conditions.expression = "amount > 50000"` and `riskScoreImpact = 60`.
+
+Send one `PURCHASE` with `amount = 75000`:
+
+```bash
+echo '{"transactionId":"txn-spel-sim-001","amount":75000.00,"currency":"ZAR","accountId":"acc-spel-sim-001","merchantId":"merch-luxury","transactionType":"PURCHASE","transactionTimestamp":"2026-01-15T10:00:00+02:00","country":"ZA","city":"Cape Town","latitude":-33.9249,"longitude":18.4241,"ipAddress":"196.25.1.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+```
+
+**Expected result:** `outcome=MEDIUM`, `riskScore=60`, `reasons=["High Value Transaction"]`.
+
+---
+
+### Velocity — ATM Burst
+
+**What it tests:** a `VELOCITY` evaluator rule with `windowMinutes=60`, `maxTransactions=5`, `transactionTypes=["ATM_WITHDRAWAL"]` and `riskScoreImpact = 50`.
+
+The evaluator counts already-persisted records for the same account within the rolling window. Events must:
+1. All be `ATM_WITHDRAWAL` (or whatever types the rule targets).
+2. Have timestamps within the same `windowMinutes` window — **do not spread them more than `windowMinutes` apart**, or the window slides past the earlier ones.
+3. Arrive one at a time with a brief delay so each is persisted before the next is evaluated.
+
+The 6th event is the one that fires (it sees 5 prior records in the window, meeting `>= maxTransactions`).
+
+```bash
+for NUM in 1 2 3 4 5 6; do
+  MIN=$(( (NUM - 1) * 5 ))
+  TS="2026-01-15T10:$(printf '%02d' $MIN):00+02:00"
+  PAYLOAD="{\"transactionId\":\"txn-vel-sim-00${NUM}\",\"amount\":500.00,\"currency\":\"ZAR\",\"accountId\":\"acc-vel-sim-001\",\"merchantId\":\"atm-${NUM}\",\"transactionType\":\"ATM_WITHDRAWAL\",\"transactionTimestamp\":\"${TS}\",\"country\":\"ZA\",\"city\":\"Johannesburg\",\"latitude\":-26.2041,\"longitude\":28.0473,\"ipAddress\":\"196.25.1.${NUM}\"}"
+  for attempt in 1 2 3; do
+    echo "$PAYLOAD" | kcat -b 127.0.0.1:9092 -t transaction-events \
+      -H "x-actor-id=payments-service" -P 2>/dev/null && break
+  done
+  echo "Sent txn-vel-sim-00${NUM} at ${TS}"
+  sleep 1   # wait for consumer to persist before next event is evaluated
+done
+```
+
+**Expected results:**
+
+| Transaction        | outcome | score | rules triggered               |
+|--------------------|---------|-------|-------------------------------|
+| txn-vel-sim-001    | LOW     | 0     | none (0 prior txns in window) |
+| txn-vel-sim-002    | LOW     | 0     | none (1 prior)                |
+| txn-vel-sim-003    | LOW     | 0     | none (2 prior)                |
+| txn-vel-sim-004    | LOW     | 0     | none (3 prior)                |
+| txn-vel-sim-005    | LOW     | 0     | none (4 prior)                |
+| **txn-vel-sim-006**| **MEDIUM** | **50** | **High ATM Withdrawal Velocity** |
+
+---
+
+### Impossible Travel — Location Jump
+
+**What it tests:** an `IMPOSSIBLE_TRAVEL` evaluator rule with `maxSpeedKmh=900`, `transactionTypes=["ATM_WITHDRAWAL"]` and `riskScoreImpact = 60`.
+
+The evaluator fetches the most recently persisted transaction for the same account and computes the implied travel speed (Haversine distance ÷ elapsed time). Send two `ATM_WITHDRAWAL` events for the same account from cities ~1,260 km apart, only 1 minute apart — implying ~75,600 km/h.
+
+**Step 1 — Cape Town withdrawal:**
+
+```bash
+echo '{"transactionId":"txn-travel-sim-001","amount":500.00,"currency":"ZAR","accountId":"acc-travel-sim-001","merchantId":"atm-cpt","transactionType":"ATM_WITHDRAWAL","transactionTimestamp":"2026-01-15T10:00:00+02:00","country":"ZA","city":"Cape Town","latitude":-33.9249,"longitude":18.4241,"ipAddress":"196.25.1.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+
+sleep 2   # ensure first event is persisted before the second arrives
+```
+
+**Step 2 — Johannesburg withdrawal 1 minute later:**
+
+```bash
+echo '{"transactionId":"txn-travel-sim-002","amount":500.00,"currency":"ZAR","accountId":"acc-travel-sim-001","merchantId":"atm-jhb","transactionType":"ATM_WITHDRAWAL","transactionTimestamp":"2026-01-15T10:01:00+02:00","country":"ZA","city":"Johannesburg","latitude":-26.2041,"longitude":28.0473,"ipAddress":"196.25.2.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+```
+
+**Expected results:**
+
+| Transaction          | outcome    | score | rules triggered              |
+|----------------------|------------|-------|------------------------------|
+| txn-travel-sim-001   | LOW        | 0     | none (no prior transaction)  |
+| **txn-travel-sim-002** | **MEDIUM** | **60** | **Impossible Travel — ATM** |
+
+The application logs will show the computed speed, e.g.:
+
+```
+ImpossibleTravel account [acc-travel-sim-001]: distance=1261.58km time=0.0167h speed=75694.53km/h (max: 900.0)
+WARN ImpossibleTravel rule 'Impossible Travel — ATM' triggered for account [acc-travel-sim-001]: 75694.53km/h > 900.0km/h
+```
+
+---
+
+### Checking Results
+
+After sending events, wait ~3 seconds for the Kafka consumer to process them, then query by `transactionId`:
+
+```bash
+curl -s http://localhost:8080/api/v1/fraud/check/txn-spel-sim-001 \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8080/api/v1/fraud/check/txn-vel-sim-006 \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8080/api/v1/fraud/check/txn-travel-sim-002 \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Sample response (velocity rule fired):**
+
+```json
+{
+  "checkId": "9c4ffdfe-1bfd-40fe-a243-496630830c1e",
+  "transactionId": "txn-vel-sim-006",
+  "outcome": "MEDIUM",
+  "riskScore": 50,
+  "reasons": ["High ATM Withdrawal Velocity"],
+  "checkedAt": "2026-01-15T08:25:03.128Z"
+}
+```
+
+To watch all events being evaluated in real time:
+
+```bash
+docker logs fraud-rule-engine -f 2>&1 | grep -E "Starting fraud check|outcome|WARN|Transaction event processed"
 ```
 
 ---

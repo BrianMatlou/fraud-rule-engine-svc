@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 import za.co.capitecbank.domain.entity.RuleEntity;
 import za.co.capitecbank.domain.model.EvalMode;
-import za.co.capitecbank.domain.model.TransactionType;
 import za.co.capitecbank.dto.TransactionEventDto;
 
 import java.math.BigDecimal;
@@ -99,6 +98,22 @@ class SpelRuleEvaluatorTest {
         assertThat(evaluator.evaluate(rule, zarRequest)).isZero();
     }
 
+    @Test
+    void evaluate_returnsRiskScoreImpact_whenTransactionTypeMatches() {
+        RuleEntity rule = ruleWithExpression(60, "transactionType == 'PURCHASE' && amount > 50000");
+        TransactionEventDto request = transactionEvent(new BigDecimal("75000"));
+
+        assertThat(evaluator.evaluate(rule, request)).isEqualTo(60);
+    }
+
+    @Test
+    void evaluate_returnsZero_whenTransactionTypeDoesNotMatch() {
+        RuleEntity rule = ruleWithExpression(40, "transactionType == 'ATM_WITHDRAWAL' && amount > 10000");
+        TransactionEventDto request = transactionEvent(new BigDecimal("75000")); // PURCHASE, not ATM_WITHDRAWAL
+
+        assertThat(evaluator.evaluate(rule, request)).isZero();
+    }
+
     // ---- helpers ----
 
     private static RuleEntity ruleWithExpression(int impact, String spelExpression) {
@@ -113,7 +128,7 @@ class SpelRuleEvaluatorTest {
     private static TransactionEventDto transactionEvent(BigDecimal amount) {
         return new TransactionEventDto(
                 "tx-spel-01", amount, "ZAR",
-                "ACC-001", "MER-001", TransactionType.PURCHASE,
+                "ACC-001", "MER-001", "PURCHASE",
                 OffsetDateTime.now(), "ZA", "Cape Town",
                 -33.9249, 18.4241, "127.0.0.1"
         );

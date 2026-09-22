@@ -12,6 +12,7 @@ import za.co.capitecbank.dto.CreateRuleRequestDto;
 import za.co.capitecbank.dto.RuleResponseDto;
 import za.co.capitecbank.dto.UpdateRuleRequestDto;
 import za.co.capitecbank.mapper.RuleMapper;
+import za.co.capitecbank.service.evaluator.SpelRuleEvaluator;
 import za.co.capitecbank.service.validator.RuleConditionValidator;
 
 import java.util.List;
@@ -25,6 +26,7 @@ public class RuleService {
     private final RuleConditionValidator validator;
     private final RuleRepository ruleRepository;
     private final RuleMapper ruleMapper;
+    private final SpelRuleEvaluator spelRuleEvaluator;
 
     /** Validates and persists a new fraud detection rule. */
     public RuleResponseDto createRule(CreateRuleRequestDto request) {
@@ -71,7 +73,10 @@ public class RuleService {
         if (request.description() != null) entity.setDescription(request.description());
         if (request.riskScoreImpact() != null) entity.setRiskScoreImpact(request.riskScoreImpact());
         if (request.active() != null) entity.setActive(request.active());
-        if (request.conditions() != null) entity.setConditions(ruleMapper.toConditionsString(request.conditions()));
+        if (request.conditions() != null) {
+            entity.setConditions(ruleMapper.toConditionsString(request.conditions()));
+            spelRuleEvaluator.evictCache(id);
+        }
 
         RuleResponseDto response = ruleMapper.toResponse(ruleRepository.save(entity));
         log.atInfo().addKeyValue(LogKey.RULE_ID.getKey(), id).log("Rule updated: {}", response.name());

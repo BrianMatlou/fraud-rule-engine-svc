@@ -19,7 +19,7 @@ public class FraudCheckMapper {
                 .currency(requestDto.currency())
                 .accountId(requestDto.accountId())
                 .merchantId(requestDto.merchantId())
-                .transactionType(requestDto.transactionType().name())
+                .transactionType(requestDto.transactionType())
                 .transactionTimestamp(requestDto.transactionTimestamp())
                 .country(requestDto.country())
                 .city(requestDto.city())

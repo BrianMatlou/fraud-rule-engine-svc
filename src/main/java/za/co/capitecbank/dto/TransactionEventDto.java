@@ -1,7 +1,5 @@
 package za.co.capitecbank.dto;
 
-import za.co.capitecbank.domain.model.TransactionType;
-
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
@@ -11,7 +9,7 @@ public record TransactionEventDto(
     String currency,
     String accountId,
     String merchantId,
-    TransactionType transactionType,
+    String transactionType,
     OffsetDateTime transactionTimestamp,
     String country,
     String city,

@@ -66,7 +66,7 @@ public class VelocityRuleEvaluator implements RuleEvaluator {
         }
 
         List<String> transactionTypes = extractTransactionTypes(conditions);
-        if (!transactionTypes.isEmpty() && !transactionTypes.contains(request.transactionType().name())) {
+        if (!transactionTypes.isEmpty() && !transactionTypes.contains(request.transactionType())) {
             log.debug("Velocity rule '{}': skipped — transactionType [{}] not in scope {}",
                     rule.getName(), request.transactionType(), transactionTypes);
             return 0;

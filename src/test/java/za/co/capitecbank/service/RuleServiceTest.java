@@ -14,6 +14,7 @@ import za.co.capitecbank.dto.CreateRuleRequestDto;
 import za.co.capitecbank.dto.RuleResponseDto;
 import za.co.capitecbank.dto.UpdateRuleRequestDto;
 import za.co.capitecbank.mapper.RuleMapper;
+import za.co.capitecbank.service.evaluator.SpelRuleEvaluator;
 import za.co.capitecbank.service.validator.RuleConditionValidator;
 
 import java.util.List;
@@ -35,6 +36,7 @@ class RuleServiceTest {
     @Mock private RuleConditionValidator validator;
     @Mock private RuleRepository ruleRepository;
     @Mock private RuleMapper ruleMapper;
+    @Mock private SpelRuleEvaluator spelRuleEvaluator;
 
     @InjectMocks
     private RuleService service;
@@ -140,6 +142,42 @@ class RuleServiceTest {
         assertThat(saved.getName()).isEqualTo("Original Name");
         assertThat(saved.getDescription()).isEqualTo("Original desc");
         assertThat(saved.getRiskScoreImpact()).isEqualTo(30);
+    }
+
+    @Test
+    void updateRule_evictsSpelCache_whenConditionsAreUpdated() {
+        UUID id = UUID.randomUUID();
+        RuleEntity entity = ruleEntity();
+        tools.jackson.databind.node.ObjectNode conditions = new tools.jackson.databind.ObjectMapper()
+                .createObjectNode();
+        conditions.put("expression", "amount > 999");
+        UpdateRuleRequestDto request = new UpdateRuleRequestDto(null, null, null, null, conditions);
+        RuleResponseDto dto = ruleResponseDto(id);
+
+        when(ruleRepository.findById(id)).thenReturn(Optional.of(entity));
+        when(ruleMapper.toConditionsString(conditions)).thenReturn("{\"expression\":\"amount > 999\"}");
+        when(ruleRepository.save(entity)).thenReturn(entity);
+        when(ruleMapper.toResponse(entity)).thenReturn(dto);
+
+        service.updateRule(id, request);
+
+        verify(spelRuleEvaluator).evictCache(id);
+    }
+
+    @Test
+    void updateRule_doesNotEvictSpelCache_whenConditionsAreNull() {
+        UUID id = UUID.randomUUID();
+        RuleEntity entity = ruleEntity();
+        UpdateRuleRequestDto request = new UpdateRuleRequestDto("New Name", null, null, null, null);
+        RuleResponseDto dto = ruleResponseDto(id);
+
+        when(ruleRepository.findById(id)).thenReturn(Optional.of(entity));
+        when(ruleRepository.save(entity)).thenReturn(entity);
+        when(ruleMapper.toResponse(entity)).thenReturn(dto);
+
+        service.updateRule(id, request);
+
+        verify(spelRuleEvaluator, org.mockito.Mockito.never()).evictCache(any());
     }
 
     @Test

@@ -11,7 +11,6 @@ import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
 import za.co.capitecbank.domain.entity.RuleEntity;
 import za.co.capitecbank.domain.model.EvalMode;
 import za.co.capitecbank.domain.model.FraudOutcome;
-import za.co.capitecbank.domain.model.TransactionType;
 import za.co.capitecbank.domain.repo.CheckRepository;
 import za.co.capitecbank.domain.repo.RuleRepository;
 import za.co.capitecbank.dto.FraudCheckResponse;
@@ -207,7 +206,7 @@ class FraudCheckServiceTest {
     private static TransactionEventDto transactionEvent() {
         return new TransactionEventDto(
                 "tx-001", new BigDecimal("1500.00"), "ZAR",
-                "ACC-001", "MER-001", TransactionType.PURCHASE,
+                "ACC-001", "MER-001", "PURCHASE",
                 OffsetDateTime.now(), "ZA", "Johannesburg",
                 -26.2041, 28.0473, "192.168.1.1"
         );
