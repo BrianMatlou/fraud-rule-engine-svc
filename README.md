@@ -432,7 +432,7 @@ curl http://localhost:8080/actuator/health
 
 ### Rule Types
 
-There are four rule types split across two evaluation modes:
+For the examples below, there are four rule types split across two evaluation modes:
 
 | Rule Type           | Eval Mode   | How it works                                                |
 |---------------------|-------------|-------------------------------------------------------------|
@@ -664,11 +664,6 @@ Transaction events arrive on the `transaction-events` topic. Each message **must
 ```bash
 # Install kcat: brew install kcat
 
-# Two requirements for correct delivery:
-# 1. Use 127.0.0.1 — kcat resolves localhost to IPv6 ([::1]) but Kafka listens on IPv4 only.
-# 2. Pipe through jq -c '.' — kcat uses newline as the message delimiter, so a
-#    multi-line JSON body becomes one message per line. jq -c compacts to a single line.
-
 echo '{
   "transactionId": "txn-001",
   "amount": 75000.00,
@@ -765,7 +760,7 @@ curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
   "checkId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "transactionId": "txn-high-001",
   "outcome": "HIGH",
-  "riskScore": 60,
+  "riskScore": 70,
   "reason": null,
   "checkedAt": "2024-01-15T10:30:05.123456Z"
 }
@@ -775,9 +770,9 @@ curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
 
 | Outcome  | Condition          |
 |----------|--------------------|
-| `HIGH`   | riskScore >= 100   |
-| `MEDIUM` | riskScore > 50     |
-| `LOW`    | riskScore <= 50    |
+| `HIGH`   | riskScore >= 70   |
+| `MEDIUM` | riskScore > 40     |
+| `LOW`    | riskScore <= 40    |
 
 ---
 
@@ -893,7 +888,7 @@ All error responses follow a consistent shape:
 | Test class | Key scenarios |
 |---|---|
 | `VelocityRuleEvaluatorTest` | `supports()` correct/wrong mode; count below/at/above threshold; missing required conditions keys; invalid JSON; `windowMinutes=0`; window start computation verified via `ArgumentCaptor` |
-| `ImpossibleTravelRuleEvaluatorTest` | No prior transaction; null coordinates (current and prior); same location; speed below/at/above threshold; zero and negative time delta; default `maxSpeedKmh`; Haversine accuracy (London→New York ≈ 5570 km ± 10 km) |
+| `ImpossibleTravelRuleEvaluatorTest` | No prior transaction; null coordinates (current and prior); same location; speed below/at/above threshold; zero and negative time delta; default `maxSpeedKmh`; Haversine accuracy
 
 ---
 
@@ -902,7 +897,7 @@ All error responses follow a consistent shape:
 Available without authentication at:
 
 ```
-http://localhost:8080/swagger-ui.html
+http://http://localhost:8080/swagger-ui/index.html#/
 ```
 
 The OpenAPI spec (for import into Postman or Insomnia) is at:
