@@ -9,10 +9,10 @@
         <relativePath/>
     </parent>
     <groupId>za.co.capitecbank</groupId>
-    <artifactId>transaction-fraud-check</artifactId>
+    <artifactId>fraud-rule-engine</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>transaction-fraud-check</name>
-    <description>transaction-fraud-check</description>
+    <name>fraud-rule-engine</name>
+    <description>fraud-rule-engine</description>
     <url/>
     <licenses>
         <license/>
@@ -73,11 +73,6 @@
             <artifactId>spring-boot-starter-data-jpa-test</artifactId>
             <scope>test</scope>
         </dependency>
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.boot</groupId>-->
-<!--            <artifactId>spring-boot-starter-kafka-test</artifactId>-->
-<!--            <scope>test</scope>-->
-<!--        </dependency>-->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jackson</artifactId>
@@ -104,6 +99,14 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
     </dependencies>
 
