@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
 import za.co.capitecbank.domain.entity.RuleEntity;
 import za.co.capitecbank.domain.model.FraudOutcome;
+import za.co.capitecbank.domain.model.LogKey;
 import za.co.capitecbank.domain.repo.CheckRepository;
 import za.co.capitecbank.domain.repo.RuleRepository;
 import za.co.capitecbank.dto.FraudCheckResponse;
@@ -32,7 +33,9 @@ public class FraudCheckService {
     private final RuleRepository ruleRepository;
     private final CheckRepository checkRepository;
 
+    /** Evaluates all active rules against the transaction and persists the fraud check result. */
     public FraudCheckResponse performCheck(TransactionEventDto request){
+        log.atInfo().addKeyValue(LogKey.TRANSACTION_ID.getKey(), request.transactionId()).log("Starting fraud check");
         List<RuleEntity> activeRules = ruleRepository.findByActiveTrue();
 
         int totalScore = 0;
@@ -62,10 +65,15 @@ public class FraudCheckService {
         int cappedScore = Math.min(totalScore, 100);
         FraudOutcome outcome = calculateOutcome(cappedScore);
         FraudCheckRequestEntity fraudCheckRequest = checkRepository.save(FraudCheckMapper.buildFraudCheckRequestEntity(request, outcome, cappedScore, reasons));
-        return FraudCheckMapper.buildFraudCheckResponse(fraudCheckRequest);
+        FraudCheckResponse response = FraudCheckMapper.buildFraudCheckResponse(fraudCheckRequest);
+        log.atInfo().addKeyValue(LogKey.TRANSACTION_ID.getKey(), request.transactionId())
+                .log("Fraud check completed: outcome={}, score={}", outcome, cappedScore);
+        return response;
     }
 
+    /** Looks up a previously stored fraud check result by transaction ID. */
     public FraudCheckResponse findCheckResults(final String transactionId) {
+        log.atDebug().addKeyValue(LogKey.TRANSACTION_ID.getKey(), transactionId).log("Looking up fraud check result");
         return this.checkRepository.findByTransactionId(transactionId)
                 .map(FraudCheckMapper::buildFraudCheckResponse)
                 .orElseThrow(() -> new EntityNotFoundException("No fraud check found for transactionId: " + transactionId));

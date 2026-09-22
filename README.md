@@ -98,6 +98,13 @@ export DATASOURCE_PASSWORD=fraud_pass
 
 ### Option A — Full Docker stack (recommended)
 
+**Prerequisite — build the app image first** (only needed once, or after code changes):
+
+```bash
+./mvnw clean package -DskipTests -B
+docker build -t fraud-rule-engine .
+```
+
 Starts PostgreSQL, Keycloak, Kafka, Kafka UI, **and the application** in one command:
 
 ```bash
@@ -365,7 +372,7 @@ Tokens expire in **5 minutes**. Re-run the relevant block above to refresh befor
 **Common errors:**
 
 | Error | Cause | Fix |
-|---|---|---|
+|-------|-------|-----|
 | `invalid_client` | Client does not exist or secret is wrong | Re-run Option B in step 2, or check the Credentials tab in the UI |
 | `Realm not found` | `capitec` realm was never created | Complete step 1 first |
 | `null` from `jq` | Token request returned an error object | Remove `jq -r '.access_token'` and inspect the full response |
@@ -768,11 +775,11 @@ curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
 
 **Outcome values:**
 
-| Outcome  | Condition          |
-|----------|--------------------|
-| `HIGH`   | riskScore >= 70   |
-| `MEDIUM` | riskScore > 40     |
-| `LOW`    | riskScore <= 40    |
+| Outcome  | Condition       |
+|----------|-----------------|
+| `HIGH`   | riskScore >= 70 |
+| `MEDIUM` | riskScore > 40  |
+| `LOW`    | riskScore <= 40 |
 
 ---
 
@@ -886,9 +893,9 @@ All error responses follow a consistent shape:
 ### Evaluator unit test scenarios
 
 | Test class | Key scenarios |
-|---|---|
+|------------|---------------|
 | `VelocityRuleEvaluatorTest` | `supports()` correct/wrong mode; count below/at/above threshold; missing required conditions keys; invalid JSON; `windowMinutes=0`; window start computation verified via `ArgumentCaptor` |
-| `ImpossibleTravelRuleEvaluatorTest` | No prior transaction; null coordinates (current and prior); same location; speed below/at/above threshold; zero and negative time delta; default `maxSpeedKmh`; Haversine accuracy
+| `ImpossibleTravelRuleEvaluatorTest` | No prior transaction; null coordinates (current and prior); same location; speed below/at/above threshold; zero and negative time delta; default `maxSpeedKmh`; Haversine accuracy |
 
 ---
 
@@ -897,7 +904,7 @@ All error responses follow a consistent shape:
 Available without authentication at:
 
 ```
-http://http://localhost:8080/swagger-ui/index.html#/
+http://localhost:8080/swagger-ui/index.html#/
 ```
 
 The OpenAPI spec (for import into Postman or Insomnia) is at:
