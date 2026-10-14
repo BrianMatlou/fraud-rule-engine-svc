@@ -1,0 +1,1077 @@
+# Transaction Fraud Check Service
+
+A production-grade Spring Boot service that processes transaction events, evaluates them against configurable fraud rules, and persists outcomes for retrieval.
+
+---
+
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [Prerequisites](#prerequisites)
+3. [Environment Variables](#environment-variables)
+4. [Start Infrastructure](#start-infrastructure)
+5. [Keycloak Setup](#keycloak-setup)
+6. [Build and Run the Service](#build-and-run-the-service)
+7. [Fraud Rules](#fraud-rules)
+   - [Rule Types](#rule-types)
+   - [Create a SpEL Rule](#create-a-spel-rule)
+   - [Create an Evaluator Rule](#create-an-evaluator-rule)
+   - [List / Get / Update / Delete Rules](#list--get--update--delete-rules)
+8. [Send Transaction Events via Kafka](#send-transaction-events-via-kafka)
+9. [Simulating Evaluator Tests](#simulating-evaluator-tests)
+   - [Prerequisites](#prerequisites-1)
+   - [SpEL — High Value Transaction](#spel--high-value-transaction)
+   - [Velocity — ATM Burst](#velocity--atm-burst)
+   - [Impossible Travel — Location Jump](#impossible-travel--location-jump)
+   - [Checking Results](#checking-results)
+10. [Fraud Check Results API](#fraud-check-results-api)
+11. [Scoring Logic](#scoring-logic)
+12. [API Reference](#api-reference)
+13. [Testing](#testing)
+14. [Swagger UI](#swagger-ui)
+
+---
+
+## Architecture Overview
+
+```
+Upstream systems
+      │
+      ▼ Kafka topic: transaction-events
+┌─────────────────────────────────────────┐
+│  TransactionEventsConsumer              │
+│  (x-actor-id header → AuditContext)     │
+└────────────────┬────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────┐
+│  FraudCheckService                      │
+│  • loads active RuleEntity records      │
+│  • dispatches each to RuleEvaluator     │
+│  • sums risk scores (cap 100)           │
+│  • persists FraudCheckRequestEntity     │
+└────────────────┬────────────────────────┘
+                 │
+       ┌─────────┴──────────┐
+       ▼                    ▼
+  SpEL Rule Evaluators    Custom evaluators
+  AMOUNT_THRESHOLD     VELOCITY
+  COUNTRY_BLACKLIST    IMPOSSIBLE_TRAVEL
+```
+
+**Infrastructure:**
+
+| Service      | Port  | Purpose                       |
+|--------------|-------|-------------------------------|
+| PostgreSQL   | 5432  | Fraud checks + Keycloak data  |
+| Keycloak     | 9090  | OAuth2 / JWT issuer           |
+| Kafka        | 9092  | Transaction event stream      |
+| Kafka UI     | 8090  | Kafka topic browser           |
+| Application  | 8080  | REST API                      |
+
+---
+
+## Prerequisites
+
+- Java 25
+- Maven (or use the included `./mvnw`)
+- Docker and Docker Compose
+- `curl`
+- `jq` — [installation instructions](https://jqlang.org/download/)
+- `kcat` — [installation instructions](https://github.com/edenhill/kcat#install)
+
+---
+
+## Environment Variables
+
+Create `config/.env` — this file is read by Docker Compose and required before starting anything.
+
+```bash
+# config/.env
+POSTGRES_DB=transaction_fraud
+POSTGRES_USER=fraud_user
+POSTGRES_PASSWORD=fraud_pass
+```
+
+For **local dev** (running the app with `./mvnw spring-boot:run` instead of Docker), also export:
+
+```bash
+export DATASOURCE_URL=jdbc:postgresql://localhost:5432/transaction_fraud
+export DATASOURCE_USERNAME=fraud_user
+export DATASOURCE_PASSWORD=fraud_pass
+```
+
+---
+
+## Start Infrastructure
+
+### Option A — Full Docker stack (recommended)
+
+**Prerequisite — build the app image first** (only needed once, or after code changes):
+
+```bash
+docker build -t fraud-rule-engine .
+```
+
+The Dockerfile is a multi-stage build — it compiles the jar itself (via `./mvnw` inside the build stage), so no separate Maven step is needed on the host first.
+
+Starts PostgreSQL, Keycloak, Kafka, Kafka UI, **and the application** in one command:
+
+```bash
+docker compose -f config/docker-compose.yml --env-file config/.env up -d
+```
+
+Wait for all services to be healthy:
+
+```bash
+docker compose -f config/docker-compose.yml ps
+```
+
+All five services (`postgres`, `keycloak`, `kafka`, `kafka-ui`, `app`) must show `healthy` or `running`. The application is ready when `transaction-fraud-app` reports healthy.
+
+### Option B — Infrastructure only (for local dev)
+
+Starts only the backing services; run the application separately with Maven:
+
+```bash
+docker compose -f config/docker-compose.yml --env-file config/.env up -d postgres keycloak kafka kafka-ui
+```
+
+**Kafka UI** is available at [http://localhost:8090](http://localhost:8090) — use it to browse topics and publish test events.
+
+---
+
+## Keycloak Setup
+
+The application validates JWTs issued by `http://localhost:9090/realms/capitec`. You need to create this realm and a client once after first boot.
+
+> **Note:** Keycloak data is stored in PostgreSQL. The realm and client survive container restarts as long as the `postgres` volume is intact. If you run `docker compose down -v` (removes volumes), repeat this setup.
+
+### 1. Create the realm
+
+1. Open [http://localhost:9090](http://localhost:9090)
+2. Log in with `admin` / `admin123`
+3. Click **Create realm** → set **Realm name** to `capitec` → **Create**
+
+---
+
+### 2. Create a client
+
+You can create the client via the UI or via the Admin REST API. The API approach is faster and scriptable.
+
+#### Option A — Keycloak Admin UI
+
+1. In the `capitec` realm, go to **Clients** → **Create client**
+2. Fill in the following on **General Settings**:
+   - **Client type**: `OpenID Connect`
+   - **Client ID**: `fraud-service-client`
+3. Click **Next** → on **Capability config**:
+   - **Client authentication**: `ON`
+   - **Authorization**: `OFF`
+   - **Authentication flow**: uncheck everything except **Service accounts roles**
+4. Click **Next** → **Save**
+5. Go to the **Credentials** tab → copy the auto-generated **Client secret**
+
+#### Option B — Admin REST API (one-shot, no browser)
+
+Pick a secret you want to use (or generate one), then run:
+
+```bash
+# 1. Get an admin token
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:9090/realms/master/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" \
+  -d "username=admin" \
+  -d "password=admin123" \
+  | jq -r '.access_token')
+
+# 2. Create the client with a specific secret
+curl -s -X POST http://localhost:9090/admin/realms/capitec/clients \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clientId": "fraud-service-client",
+    "enabled": true,
+    "clientAuthenticatorType": "client-secret",
+    "secret": "xWpjsAlEzGQyvpmaH8ssGGji1mLutHDK",
+    "serviceAccountsEnabled": true,
+    "standardFlowEnabled": false,
+    "directAccessGrantsEnabled": true,
+    "publicClient": false,
+    "protocol": "openid-connect"
+  }'
+```
+
+A `201 Created` response with an empty body confirms success.
+
+**Verify the client exists:**
+
+```bash
+curl -s http://localhost:9090/admin/realms/capitec/clients \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  | jq '[.[] | {clientId, enabled, serviceAccountsEnabled}]'
+```
+
+`fraud-service-client` should appear with `"serviceAccountsEnabled": true`.
+
+---
+
+### 3. Assign roles to the client
+
+Every JWT must carry at least one realm role. Roles control what the bearer can do:
+
+| Role             | Who holds it                  | Permitted operations                              |
+|------------------|-------------------------------|---------------------------------------------------|
+| `FRAUD_ADMIN`    | Operations / admin users      | Create, update, delete rules; query check results |
+| `FRAUD_ANALYST`  | Fraud analysts                | Read rules; query check results                   |
+| `FRAUD_CONSUMER` | Upstream service accounts     | Query check results only                          |
+
+`fraud-service-client` should hold `FRAUD_CONSUMER`. Assign it via the Admin REST API:
+
+```bash
+# Get an admin token
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:9090/realms/master/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" \
+  -d "username=admin" \
+  -d "password=admin123" \
+  | jq -r '.access_token')
+
+# Create the FRAUD_CONSUMER realm role (skip if it already exists — 409 is fine)
+curl -s -X POST http://localhost:9090/admin/realms/capitec/roles \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"FRAUD_CONSUMER","description":"Read-only access to fraud check results for service accounts"}'
+
+# Get the fraud-service-client internal UUID
+CLIENT_UUID=$(curl -s "http://localhost:9090/admin/realms/capitec/clients?clientId=fraud-service-client" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+
+# Get the service account user UUID
+SA_USER_ID=$(curl -s "http://localhost:9090/admin/realms/capitec/clients/$CLIENT_UUID/service-account-user" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.id')
+
+# Get the FRAUD_CONSUMER role definition
+ROLE=$(curl -s "http://localhost:9090/admin/realms/capitec/roles/FRAUD_CONSUMER" \
+  -H "Authorization: Bearer $ADMIN_TOKEN")
+
+# Assign the role to the service account
+curl -s -X POST "http://localhost:9090/admin/realms/capitec/users/$SA_USER_ID/role-mappings/realm" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "[$(echo $ROLE | jq '{id,name}')]"
+```
+
+**Assign via UI instead:**
+1. **Clients** → `fraud-service-client` → **Service accounts roles** tab
+2. **Assign role** → filter by realm → select `FRAUD_CONSUMER` → **Assign**
+
+To create additional human users, follow step 4 below.
+
+---
+
+### 4. Create human users
+
+Human users authenticate with the **Password Credentials** grant and require `FRAUD_ADMIN` (full access) or `FRAUD_ANALYST` (read-only) roles. Service accounts use `FRAUD_CONSUMER` (step 3).
+
+#### Admin REST API
+
+```bash
+# Get an admin token
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:9090/realms/master/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" \
+  -d "username=admin" \
+  -d "password=admin123" \
+  | jq -r '.access_token')
+
+# Create the FRAUD_ADMIN realm role (skip if it already exists — 409 is fine)
+curl -s -X POST http://localhost:9090/admin/realms/capitec/roles \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"FRAUD_ADMIN","description":"Full access: create, update, delete rules and query check results"}'
+
+# Create the FRAUD_ANALYST realm role (skip if it already exists — 409 is fine)
+curl -s -X POST http://localhost:9090/admin/realms/capitec/roles \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"FRAUD_ANALYST","description":"Read-only access to rules and fraud check results"}'
+
+# Create user brian (FRAUD_ADMIN)
+curl -s -X POST http://localhost:9090/admin/realms/capitec/users \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "brian",
+    "firstName": "Brian",
+    "lastName": "Matlou",
+    "email": "brian@capitecbank.co.za",
+    "enabled": true,
+    "emailVerified": true,
+    "credentials": [{ "type": "password", "value": "admin", "temporary": false }]
+  }'
+
+# Get the user UUID
+USER_ID=$(curl -s "http://localhost:9090/admin/realms/capitec/users?username=brian" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq -r '.[0].id')
+
+# Get the FRAUD_ADMIN role definition
+ROLE=$(curl -s "http://localhost:9090/admin/realms/capitec/roles/FRAUD_ADMIN" \
+  -H "Authorization: Bearer $ADMIN_TOKEN")
+
+# Assign FRAUD_ADMIN to the user
+curl -s -X POST "http://localhost:9090/admin/realms/capitec/users/$USER_ID/role-mappings/realm" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "[$(echo $ROLE | jq '{id,name}')]"
+```
+
+A `204 No Content` response on the final call confirms the role is assigned.
+
+**For a read-only analyst**, repeat with `"username": "analyst"` and assign `FRAUD_ADMIN` → `FRAUD_ANALYST` in the role step.
+
+#### UI alternative
+
+1. **Users** → **Add user** → fill in username, first name, last name, email → toggle **Email verified** ON → **Create**
+2. **Credentials** tab → **Set password** → enter password → toggle **Temporary** OFF → **Save**
+3. **Role mappings** tab → **Assign role** → filter by realm → select `FRAUD_ADMIN` → **Assign**
+
+---
+
+### 5. Obtain a token
+
+#### Service-to-service (client credentials)
+
+Used by upstream services that hold the `FRAUD_CONSUMER` role.
+
+```bash
+export CLIENT_SECRET=xWpjsAlEzGQyvpmaH8ssGGji1mLutHDK   # or the secret from the UI Credentials tab
+
+export TOKEN=$(curl -s -X POST http://localhost:9090/realms/capitec/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=fraud-service-client" \
+  -d "client_secret=$CLIENT_SECRET" \
+  | jq -r '.access_token')
+
+echo $TOKEN | cut -c1-40
+```
+
+#### Human user (password credentials)
+
+Used by `FRAUD_ADMIN` or `FRAUD_ANALYST` users who manage rules via the API or Postman.
+
+```bash
+export TOKEN=$(curl -s -X POST http://localhost:9090/realms/capitec/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=fraud-service-client" \
+  -d "client_secret=xWpjsAlEzGQyvpmaH8ssGGji1mLutHDK" \
+  -d "username=brian" \
+  -d "password=admin" \
+  | jq -r '.access_token')
+
+echo $TOKEN | cut -c1-40
+```
+
+Tokens expire in **5 minutes**. Re-run the relevant block above to refresh before making API calls.
+
+**Common errors:**
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `invalid_client` | Client does not exist or secret is wrong | Re-run Option B in step 2, or check the Credentials tab in the UI |
+| `Realm not found` | `capitec` realm was never created | Complete step 1 first |
+| `null` from `jq` | Token request returned an error object | Remove `jq -r '.access_token'` and inspect the full response |
+| `unauthorized_client` | `directAccessGrantsEnabled` is `false` | Re-create the client with `directAccessGrantsEnabled: true` (step 2) |
+| `invalid_grant: Account is not fully set up` | User missing `firstName`, `lastName`, `email`, or `emailVerified` | Patch the user via Admin API (step 4) |
+| `403 Forbidden` | Token lacks the required role | Verify role mapping (steps 3–4) |
+
+---
+
+## Build and Run the Service
+
+### Docker (Option A — full stack already running)
+
+If you started the full Docker stack above, the application is already running on port `8080`. No additional steps needed.
+
+Build and run the Docker image:
+
+```bash
+# 1. Build the Docker image (multi-stage build compiles the jar internally)
+docker build -t fraud-rule-engine .
+
+# 2. Run (with infrastructure already up via docker compose)
+docker run -d --name fraud-rule-engine \
+  --network config_default \
+  -p 8080:8080 \
+  -e DATASOURCE_URL=jdbc:postgresql://postgres:5432/transaction_fraud \
+  -e DATASOURCE_USERNAME=fraud_user \
+  -e DATASOURCE_PASSWORD=fraud_pass \
+  -e OAUTH2_ISSUER_URI=http://localhost:9090/realms/capitec \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://keycloak:8080/realms/capitec/protocol/openid-connect/certs \
+  -e KAFKA_BOOTSTRAP_SERVERS=kafka:29092 \
+  fraud-rule-engine
+```
+
+### Local dev (Option B)
+
+Ensure the infrastructure services are running (Option B above), then:
+
+```bash
+# Build
+./mvnw clean install
+
+# Run
+./mvnw spring-boot:run
+
+# Run tests
+./mvnw test
+```
+
+The service starts on port `8080`.
+
+### Health check
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+---
+
+## Fraud Rules
+
+### Rule Types
+
+For the examples below, there are four rule types split across two evaluation modes:
+
+| Rule Type           | Eval Mode   | How it works                                                |
+|---------------------|-------------|-------------------------------------------------------------|
+| `AMOUNT_THRESHOLD`  | `SPEL`      | SpEL expression evaluated against the transaction fields    |
+| `COUNTRY_BLACKLIST` | `SPEL`      | SpEL expression evaluated against the transaction fields    |
+| `VELOCITY`          | `EVALUATOR` | Custom evaluator (checks transaction frequency per account) |
+| `IMPOSSIBLE_TRAVEL` | `EVALUATOR` | Custom evaluator (checks geolocation jumps between events)  |
+
+**SpEL rules** use a `conditions` JSON object with a single `expression` key. The expression root object is the transaction, so any transaction field can be referenced directly.
+
+**Available fields in SpEL expressions:**
+
+| Field                  | Type                 | Example value           |
+|------------------------|----------------------|-------------------------|
+| `transactionId`        | String               | `"txn-abc-123"`         |
+| `amount`               | BigDecimal           | `1500.00`               |
+| `currency`             | String               | `"ZAR"`                 |
+| `accountId`            | String               | `"acc-001"`             |
+| `merchantId`           | String               | `"merch-xyz"`           |
+| `transactionType`      | String               | `"PURCHASE"`            |
+| `transactionTimestamp` | OffsetDateTime       | `2024-01-15T10:30:00Z`  |
+| `country`              | String               | `"ZA"`                  |
+| `city`                 | String               | `"Cape Town"`           |
+| `latitude`             | Double               | `-33.9249`              |
+| `longitude`            | Double               | `18.4241`               |
+| `ipAddress`            | String               | `"192.168.1.100"`       |
+
+**Valid `transactionType` values:** `PURCHASE`, `WITHDRAWAL`, `DEPOSIT`, `TRANSFER`, `REFUND`, `ATM_WITHDRAWAL`
+
+---
+
+### Create a SpEL Rule
+
+#### AMOUNT_THRESHOLD — flag high-value transactions
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High Value Transaction",
+    "description": "Flags any single transaction above R50,000",
+    "ruleType": "AMOUNT_THRESHOLD",
+    "evalMode": "SPEL",
+    "riskScoreImpact": 60,
+    "conditions": {
+      "expression": "amount > 50000"
+    }
+  }'
+```
+
+#### AMOUNT_THRESHOLD — flag ATM withdrawals over a threshold
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Large ATM Withdrawal",
+    "description": "Flags ATM withdrawals above R10,000",
+    "ruleType": "AMOUNT_THRESHOLD",
+    "evalMode": "SPEL",
+    "riskScoreImpact": 40,
+    "conditions": {
+      "expression": "transactionType == '\''ATM_WITHDRAWAL'\'' && amount > 10000"
+    }
+  }'
+```
+
+#### COUNTRY_BLACKLIST — flag transactions from restricted countries
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Sanctioned Country Block",
+    "description": "Flags transactions originating from sanctioned countries",
+    "ruleType": "COUNTRY_BLACKLIST",
+    "evalMode": "SPEL",
+    "riskScoreImpact": 80,
+    "conditions": {
+      "expression": "country == '\''KP'\'' || country == '\''IR'\'' || country == '\''CU'\''"
+    }
+  }'
+```
+
+#### COUNTRY_BLACKLIST — flag foreign currency on domestic accounts
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Foreign Currency on Domestic Account",
+    "description": "Flags non-ZAR transactions from South African IPs",
+    "ruleType": "COUNTRY_BLACKLIST",
+    "evalMode": "SPEL",
+    "riskScoreImpact": 30,
+    "conditions": {
+      "expression": "country == '\''ZA'\'' && currency != '\''ZAR'\''"
+    }
+  }'
+```
+
+---
+
+### Create an Evaluator Rule
+
+Evaluator rules do not use SpEL expressions. The `conditions` field carries configuration parameters consumed by the custom evaluator.
+
+#### VELOCITY — flag accounts with too many transactions
+
+Counts completed transactions for the same account within a rolling time window. Fires when the count meets or exceeds `maxTransactions`.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High ATM Withdrawal Velocity",
+    "description": "Flags accounts with 5 or more ATM withdrawals in 60 minutes",
+    "ruleType": "VELOCITY",
+    "evalMode": "EVALUATOR",
+    "riskScoreImpact": 50,
+    "conditions": {
+      "windowMinutes": 60,
+      "maxTransactions": 5,
+      "transactionTypes": ["ATM_WITHDRAWAL"]
+    }
+  }'
+```
+
+**`conditions` fields:**
+- `windowMinutes` (integer, required, > 0) — rolling look-back period in minutes
+- `maxTransactions` (integer, required, > 0) — rule fires when prior count meets this value
+- `transactionTypes` (array of strings, optional) — restrict to specific types, e.g. `["ATM_WITHDRAWAL", "WITHDRAWAL"]`. Omit to apply to all types.
+
+#### IMPOSSIBLE_TRAVEL — flag geolocation anomalies
+
+Compares the current transaction's coordinates against the most recent prior transaction for the same account. Derives implied travel speed (Haversine distance ÷ elapsed time). Fires when implied speed exceeds `maxSpeedKmh`.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/rules/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Impossible Travel — ATM",
+    "description": "Flags ATM withdrawals implying travel faster than 900 km/h between successive events",
+    "ruleType": "IMPOSSIBLE_TRAVEL",
+    "evalMode": "EVALUATOR",
+    "riskScoreImpact": 60,
+    "conditions": {
+      "maxSpeedKmh": 900,
+      "transactionTypes": ["ATM_WITHDRAWAL"]
+    }
+  }'
+```
+
+**`conditions` fields:**
+- `maxSpeedKmh` (number, optional, default `900`) — implied speed above this value triggers the rule. Use `900` for a commercial aviation baseline; use `200` to flag road-speed-only anomalies.
+- `transactionTypes` (array of strings, optional) — restrict to specific types. Omit to apply to all types.
+
+---
+
+### List / Get / Update / Delete Rules
+
+**List all rules:**
+
+```bash
+curl -s http://localhost:8080/api/v1/rules \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Get a rule by ID:**
+
+```bash
+curl -s http://localhost:8080/api/v1/rules/<RULE_UUID> \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Update a rule** (all fields optional — only supplied fields are updated):
+
+```bash
+curl -s -X PUT http://localhost:8080/api/v1/rules/<RULE_UUID> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "riskScoreImpact": 75,
+    "active": true,
+    "conditions": {
+      "expression": "amount > 75000"
+    }
+  }'
+```
+
+**Disable a rule** (set `active: false` to exclude it from evaluation without deleting):
+
+```bash
+curl -s -X PUT http://localhost:8080/api/v1/rules/<RULE_UUID> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"active": false}'
+```
+
+**Delete a rule permanently:**
+
+```bash
+curl -s -X DELETE http://localhost:8080/api/v1/rules/<RULE_UUID> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## Send Transaction Events via Kafka
+
+Transaction events arrive on the `transaction-events` topic. Each message **must** include an `x-actor-id` header (the UUID of the system or user publishing the event) for audit tracking.
+
+### Option A — Kafka UI (browser)
+
+1. Open [http://localhost:8090](http://localhost:8090)
+2. Select cluster `transaction-fraud` → **Topics** → `transaction-events`
+3. Click **Produce Message**
+4. Add header: key `x-actor-id`, value `550e8400-e29b-41d4-a716-446655440000`
+5. Paste the message body below into the **Value** field and click **Produce**
+
+### Option B — kcat CLI
+
+```bash
+# Install kcat: see Prerequisites
+
+echo '{
+  "transactionId": "txn-001",
+  "amount": 75000.00,
+  "currency": "ZAR",
+  "accountId": "acc-123",
+  "merchantId": "merch-456",
+  "transactionType": "PURCHASE",
+  "transactionTimestamp": "2024-01-15T10:30:00Z",
+  "country": "ZA",
+  "city": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "ipAddress": "196.25.1.100"
+}' | jq -c '.' | kcat -b 127.0.0.1:9092 \
+     -t transaction-events \
+     -H "x-actor-id=payments-service" \
+     -P
+```
+
+### Sample event payloads
+
+**High-value purchase (triggers AMOUNT_THRESHOLD if rule ≥ 50k exists):**
+
+```json
+{
+  "transactionId": "txn-high-001",
+  "amount": 95000.00,
+  "currency": "ZAR",
+  "accountId": "acc-001",
+  "merchantId": "merch-luxury",
+  "transactionType": "PURCHASE",
+  "transactionTimestamp": "2024-01-15T10:30:00Z",
+  "country": "ZA",
+  "city": "Johannesburg",
+  "latitude": -26.2041,
+  "longitude": 28.0473,
+  "ipAddress": "196.25.1.100"
+}
+```
+
+**Sanctioned country transaction (triggers COUNTRY_BLACKLIST):**
+
+```json
+{
+  "transactionId": "txn-sanction-001",
+  "amount": 500.00,
+  "currency": "USD",
+  "accountId": "acc-002",
+  "merchantId": "merch-foreign",
+  "transactionType": "TRANSFER",
+  "transactionTimestamp": "2024-01-15T11:00:00Z",
+  "country": "KP",
+  "city": "Pyongyang",
+  "latitude": 39.0392,
+  "longitude": 125.7625,
+  "ipAddress": "175.45.176.1"
+}
+```
+
+**Normal low-risk transaction:**
+
+```json
+{
+  "transactionId": "txn-normal-001",
+  "amount": 250.00,
+  "currency": "ZAR",
+  "accountId": "acc-003",
+  "merchantId": "merch-grocery",
+  "transactionType": "PURCHASE",
+  "transactionTimestamp": "2024-01-15T12:00:00Z",
+  "country": "ZA",
+  "city": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "ipAddress": "196.25.2.50"
+}
+```
+
+---
+
+## Simulating Evaluator Tests
+
+This section shows how to fire each of the three evaluator types end-to-end using `kcat` and the REST API. Run these against a fully started stack with rules already seeded in the database (see [Fraud Rules](#fraud-rules)).
+
+### Prerequisites
+
+Obtain a token (requires `FRAUD_ADMIN` or `FRAUD_ANALYST`):
+
+```bash
+export TOKEN=$(curl -s -X POST http://localhost:9090/realms/capitec/protocol/openid-connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=password" \
+  -d "client_id=fraud-service-client" \
+  -d "client_secret=xWpjsAlEzGQyvpmaH8ssGGji1mLutHDK" \
+  -d "username=brian" \
+  -d "password=admin" \
+  | jq -r '.access_token')
+```
+
+Confirm the rules you want to trigger are active:
+
+```bash
+curl -s http://localhost:8080/api/v1/rules -H "Authorization: Bearer $TOKEN" | jq '.[].name'
+```
+
+> **kcat note (macOS):** kcat sometimes tries IPv6 (`[::1]:9092`) before IPv4, which fails if only IPv4 is bound. If a send exits non-zero, retry immediately — the second attempt typically resolves to IPv4. The loop patterns below retry automatically.
+
+---
+
+### SpEL — High Value Transaction
+
+**What it tests:** a `SPEL` rule with `conditions.expression = "amount > 50000"` and `riskScoreImpact = 60`.
+
+Send one `PURCHASE` with `amount = 75000`:
+
+```bash
+echo '{"transactionId":"txn-spel-sim-001","amount":75000.00,"currency":"ZAR","accountId":"acc-spel-sim-001","merchantId":"merch-luxury","transactionType":"PURCHASE","transactionTimestamp":"2026-01-15T10:00:00+02:00","country":"ZA","city":"Cape Town","latitude":-33.9249,"longitude":18.4241,"ipAddress":"196.25.1.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+```
+
+**Expected result:** `outcome=MEDIUM`, `riskScore=60`, `reasons=["High Value Transaction"]`.
+
+---
+
+### Velocity — ATM Burst
+
+**What it tests:** a `VELOCITY` evaluator rule with `windowMinutes=60`, `maxTransactions=5`, `transactionTypes=["ATM_WITHDRAWAL"]` and `riskScoreImpact = 50`.
+
+The evaluator counts already-persisted records for the same account within the rolling window. Events must:
+1. All be `ATM_WITHDRAWAL` (or whatever types the rule targets).
+2. Have timestamps within the same `windowMinutes` window — **do not spread them more than `windowMinutes` apart**, or the window slides past the earlier ones.
+3. Arrive one at a time with a brief delay so each is persisted before the next is evaluated.
+
+The 6th event is the one that fires (it sees 5 prior records in the window, meeting `>= maxTransactions`).
+
+```bash
+for NUM in 1 2 3 4 5 6; do
+  MIN=$(( (NUM - 1) * 5 ))
+  TS="2026-01-15T10:$(printf '%02d' $MIN):00+02:00"
+  PAYLOAD="{\"transactionId\":\"txn-vel-sim-00${NUM}\",\"amount\":500.00,\"currency\":\"ZAR\",\"accountId\":\"acc-vel-sim-001\",\"merchantId\":\"atm-${NUM}\",\"transactionType\":\"ATM_WITHDRAWAL\",\"transactionTimestamp\":\"${TS}\",\"country\":\"ZA\",\"city\":\"Johannesburg\",\"latitude\":-26.2041,\"longitude\":28.0473,\"ipAddress\":\"196.25.1.${NUM}\"}"
+  for attempt in 1 2 3; do
+    echo "$PAYLOAD" | kcat -b 127.0.0.1:9092 -t transaction-events \
+      -H "x-actor-id=payments-service" -P 2>/dev/null && break
+  done
+  echo "Sent txn-vel-sim-00${NUM} at ${TS}"
+  sleep 1   # wait for consumer to persist before next event is evaluated
+done
+```
+
+**Expected results:**
+
+| Transaction        | outcome | score | rules triggered               |
+|--------------------|---------|-------|-------------------------------|
+| txn-vel-sim-001    | LOW     | 0     | none (0 prior txns in window) |
+| txn-vel-sim-002    | LOW     | 0     | none (1 prior)                |
+| txn-vel-sim-003    | LOW     | 0     | none (2 prior)                |
+| txn-vel-sim-004    | LOW     | 0     | none (3 prior)                |
+| txn-vel-sim-005    | LOW     | 0     | none (4 prior)                |
+| **txn-vel-sim-006**| **MEDIUM** | **50** | **High ATM Withdrawal Velocity** |
+
+---
+
+### Impossible Travel — Location Jump
+
+**What it tests:** an `IMPOSSIBLE_TRAVEL` evaluator rule with `maxSpeedKmh=900`, `transactionTypes=["ATM_WITHDRAWAL"]` and `riskScoreImpact = 60`.
+
+The evaluator fetches the most recently persisted transaction for the same account and computes the implied travel speed (Haversine distance ÷ elapsed time). Send two `ATM_WITHDRAWAL` events for the same account from cities ~1,260 km apart, only 1 minute apart — implying ~75,600 km/h.
+
+**Step 1 — Cape Town withdrawal:**
+
+```bash
+echo '{"transactionId":"txn-travel-sim-001","amount":500.00,"currency":"ZAR","accountId":"acc-travel-sim-001","merchantId":"atm-cpt","transactionType":"ATM_WITHDRAWAL","transactionTimestamp":"2026-01-15T10:00:00+02:00","country":"ZA","city":"Cape Town","latitude":-33.9249,"longitude":18.4241,"ipAddress":"196.25.1.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+
+sleep 2   # ensure first event is persisted before the second arrives
+```
+
+**Step 2 — Johannesburg withdrawal 1 minute later:**
+
+```bash
+echo '{"transactionId":"txn-travel-sim-002","amount":500.00,"currency":"ZAR","accountId":"acc-travel-sim-001","merchantId":"atm-jhb","transactionType":"ATM_WITHDRAWAL","transactionTimestamp":"2026-01-15T10:01:00+02:00","country":"ZA","city":"Johannesburg","latitude":-26.2041,"longitude":28.0473,"ipAddress":"196.25.2.1"}' | \
+  kcat -b 127.0.0.1:9092 -t transaction-events -H "x-actor-id=payments-service" -P
+```
+
+**Expected results:**
+
+| Transaction          | outcome    | score | rules triggered              |
+|----------------------|------------|-------|------------------------------|
+| txn-travel-sim-001   | LOW        | 0     | none (no prior transaction)  |
+| **txn-travel-sim-002** | **MEDIUM** | **60** | **Impossible Travel — ATM** |
+
+The application logs will show the computed speed, e.g.:
+
+```
+ImpossibleTravel account [acc-travel-sim-001]: distance=1261.58km time=0.0167h speed=75694.53km/h (max: 900.0)
+WARN ImpossibleTravel rule 'Impossible Travel — ATM' triggered for account [acc-travel-sim-001]: 75694.53km/h > 900.0km/h
+```
+
+---
+
+### Checking Results
+
+After sending events, wait ~3 seconds for the Kafka consumer to process them, then query by `transactionId`:
+
+```bash
+curl -s http://localhost:8080/api/v1/fraud/check/txn-spel-sim-001 \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8080/api/v1/fraud/check/txn-vel-sim-006 \
+  -H "Authorization: Bearer $TOKEN" | jq
+
+curl -s http://localhost:8080/api/v1/fraud/check/txn-travel-sim-002 \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Sample response (velocity rule fired):**
+
+```json
+{
+  "checkId": "9c4ffdfe-1bfd-40fe-a243-496630830c1e",
+  "transactionId": "txn-vel-sim-006",
+  "outcome": "MEDIUM",
+  "riskScore": 50,
+  "reasons": ["High ATM Withdrawal Velocity"],
+  "checkedAt": "2026-01-15T08:25:03.128Z"
+}
+```
+
+To watch all events being evaluated in real time:
+
+```bash
+docker logs fraud-rule-engine -f 2>&1 | grep -E "Starting fraud check|outcome|WARN|Transaction event processed"
+```
+
+---
+
+## Fraud Check Results API
+
+After a transaction is processed (either via Kafka or directly through the service), retrieve the result by `transactionId`:
+
+```bash
+curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+**Response:**
+
+```json
+{
+  "checkId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "transactionId": "txn-high-001",
+  "outcome": "HIGH",
+  "riskScore": 70,
+  "reason": null,
+  "checkedAt": "2024-01-15T10:30:05.123456Z"
+}
+```
+
+**Outcome values:**
+
+| Outcome  | Condition       |
+|----------|-----------------|
+| `HIGH`   | riskScore >= 70 |
+| `MEDIUM` | riskScore > 40  |
+| `LOW`    | riskScore <= 40 |
+
+---
+
+## Scoring Logic
+
+1. All **active** rules are loaded from the database on each check.
+2. Each rule is dispatched to the matching `RuleEvaluator` (matched by `evalMode` + `ruleType`).
+3. The evaluator returns either `riskScoreImpact` (rule matched) or `0` (no match).
+4. All scores are summed and **capped at 100**.
+5. The capped score determines `FraudOutcome`.
+
+**Example — two rules both match:**
+
+| Rule                   | riskScoreImpact | Matched |
+|------------------------|-----------------|---------|
+| High Value Transaction | 60              | Yes     |
+| Sanctioned Country     | 80              | Yes     |
+| **Total (capped)**     | **100**         |         |
+| **Outcome**            | **HIGH**        |         |
+
+---
+
+## API Reference
+
+### Rules
+
+| Method   | Path                       | Description              | Auth     |
+|----------|----------------------------|--------------------------|----------|
+| `POST`   | `/api/v1/rules/create`     | Create a rule            | Required |
+| `GET`    | `/api/v1/rules`            | List all rules           | Required |
+| `GET`    | `/api/v1/rules/{id}`       | Get rule by UUID         | Required |
+| `PUT`    | `/api/v1/rules/{id}`       | Update a rule            | Required |
+| `DELETE` | `/api/v1/rules/{id}`       | Delete a rule            | Required |
+
+### Fraud Checks
+
+| Method | Path                                    | Description                              | Auth     |
+|--------|-----------------------------------------|------------------------------------------|----------|
+| `GET`  | `/api/v1/fraud/check/{transactionId}`   | Get fraud check result by transaction ID | Required |
+
+### Create Rule — Request Body
+
+```json
+{
+  "name": "string (required)",
+  "description": "string (required)",
+  "ruleType": "AMOUNT_THRESHOLD | COUNTRY_BLACKLIST | VELOCITY | IMPOSSIBLE_TRAVEL",
+  "evalMode": "SPEL | EVALUATOR",
+  "riskScoreImpact": 0,
+  "conditions": {}
+}
+```
+
+### Update Rule — Request Body (all fields optional)
+
+```json
+{
+  "name": "string",
+  "description": "string",
+  "riskScoreImpact": 0,
+  "active": true,
+  "conditions": {}
+}
+```
+
+### Fraud Check — Response Body
+
+```json
+{
+  "checkId": "uuid",
+  "transactionId": "string",
+  "outcome": "HIGH | MEDIUM | LOW",
+  "riskScore": 0,
+  "reason": "string | null",
+  "checkedAt": "ISO 8601 datetime"
+}
+```
+
+### Error Response
+
+All error responses follow a consistent shape:
+
+```json
+{
+  "status": 400,
+  "error": "Bad Request",
+  "message": "name: must not be blank",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "path": "/api/v1/rules/create"
+}
+```
+
+---
+
+## Testing
+
+### Run all tests
+
+```bash
+./mvnw test
+```
+
+### Run a specific test class
+
+```bash
+./mvnw test -Dtest=TransactionFraudCheckApplicationTests
+./mvnw test -Dtest=VelocityRuleEvaluatorTest
+./mvnw test -Dtest=ImpossibleTravelRuleEvaluatorTest
+```
+
+### Evaluator unit test scenarios
+
+| Test class | Key scenarios |
+|------------|---------------|
+| `VelocityRuleEvaluatorTest` | `supports()` correct/wrong mode; count below/at/above threshold; missing required conditions keys; invalid JSON; `windowMinutes=0`; window start computation verified via `ArgumentCaptor` |
+| `ImpossibleTravelRuleEvaluatorTest` | No prior transaction; null coordinates (current and prior); same location; speed below/at/above threshold; zero and negative time delta; default `maxSpeedKmh`; Haversine accuracy |
+
+---
+
+## Swagger UI
+
+Available without authentication at:
+
+```
+http://localhost:8080/swagger-ui/index.html#/
+```
+
+The OpenAPI spec (for import into Postman or Insomnia) is at:
+
+```
+http://localhost:8080/v3/api-docs
+```

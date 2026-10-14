@@ -1,0 +1,11 @@
+.git
+.gitignore
+.DS_Store
+.idea
+*.iml
+*.md
+target/
+config/docker-compose.yml
+config/keycloak/
+config/postgres/
+src/test/
