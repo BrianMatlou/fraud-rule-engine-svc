@@ -3,9 +3,9 @@
 .DS_Store
 .idea
 *.iml
-target/
-!target/fraud-rule-engine-*.jar
 *.md
+target/
 config/docker-compose.yml
 config/keycloak/
+config/postgres/
 src/test/
