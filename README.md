@@ -76,6 +76,9 @@ Upstream systems
 - Java 25
 - Maven (or use the included `./mvnw`)
 - Docker and Docker Compose
+- `curl`
+- `jq` — [installation instructions](https://jqlang.org/download/)
+- `kcat` — [installation instructions](https://github.com/edenhill/kcat#install)
 
 ---
 
@@ -107,9 +110,10 @@ export DATASOURCE_PASSWORD=fraud_pass
 **Prerequisite — build the app image first** (only needed once, or after code changes):
 
 ```bash
-./mvnw clean package -DskipTests -B
 docker build -t fraud-rule-engine .
 ```
+
+The Dockerfile is a multi-stage build — it compiles the jar itself (via `./mvnw` inside the build stage), so no separate Maven step is needed on the host first.
 
 Starts PostgreSQL, Keycloak, Kafka, Kafka UI, **and the application** in one command:
 
@@ -397,13 +401,10 @@ If you started the full Docker stack above, the application is already running o
 Build and run the Docker image:
 
 ```bash
-# 1. Build the JAR
-./mvnw clean package -DskipTests -B
-
-# 2. Build the Docker image
+# 1. Build the Docker image (multi-stage build compiles the jar internally)
 docker build -t fraud-rule-engine .
 
-# 3. Run (with infrastructure already up via docker compose)
+# 2. Run (with infrastructure already up via docker compose)
 docker run -d --name fraud-rule-engine \
   --network config_default \
   -p 8080:8080 \
@@ -675,7 +676,7 @@ Transaction events arrive on the `transaction-events` topic. Each message **must
 ### Option B — kcat CLI
 
 ```bash
-# Install kcat: brew install kcat
+# Install kcat: see Prerequisites
 
 echo '{
   "transactionId": "txn-001",
