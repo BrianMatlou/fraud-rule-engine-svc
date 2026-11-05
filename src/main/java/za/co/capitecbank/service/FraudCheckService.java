@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import za.co.capitecbank.domain.model.exception.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
 import za.co.capitecbank.domain.entity.RuleEntity;
@@ -17,6 +19,7 @@ import za.co.capitecbank.mapper.FraudCheckMapper;
 import za.co.capitecbank.service.evaluator.RuleEvaluator;
 
 import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -33,8 +36,16 @@ public class FraudCheckService {
     private final RuleRepository ruleRepository;
     private final CheckRepository checkRepository;
 
-    /** Evaluates all active rules against the transaction and persists the fraud check result. */
+    /**
+     * Evaluates all active rules against the transaction and persists the fraud check result.
+     * Idempotent: a transaction that already has a stored result returns it without re-evaluating.
+     */
     public FraudCheckResponse performCheck(TransactionEventDto request){
+        Optional<FraudCheckRequestEntity> existing = checkRepository.findByTransactionId(request.transactionId());
+        if (existing.isPresent()) {
+            return FraudCheckMapper.buildFraudCheckResponse(existing.get());
+        }
+
         log.atInfo().addKeyValue(LogKey.TRANSACTION_ID.getKey(), request.transactionId()).log("Starting fraud check");
         List<RuleEntity> activeRules = ruleRepository.findByActiveTrue();
 
@@ -69,6 +80,13 @@ public class FraudCheckService {
         log.atInfo().addKeyValue(LogKey.TRANSACTION_ID.getKey(), request.transactionId())
                 .log("Fraud check completed: outcome={}, score={}", outcome, cappedScore);
         return response;
+    }
+
+    /** Returns a page of stored fraud check results for an account. */
+    public Page<FraudCheckResponse> findChecksByAccountId(String accountId, Pageable pageable) {
+        log.atDebug().addKeyValue("Account-Id", accountId).log("Querying fraud checks for account");
+        return checkRepository.findByAccountId(accountId, pageable)
+                .map(FraudCheckMapper::buildFraudCheckResponse);
     }
 
     /** Looks up a previously stored fraud check result by transaction ID. */

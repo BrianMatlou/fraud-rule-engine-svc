@@ -1,5 +1,7 @@
 package za.co.capitecbank.domain.repo;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,6 +16,8 @@ import java.util.UUID;
 public interface CheckRepository extends JpaRepository<FraudCheckRequestEntity, UUID> {
 
     Optional<FraudCheckRequestEntity> findByTransactionId(String transactionId);
+
+    Page<FraudCheckRequestEntity> findByAccountId(String accountId, Pageable pageable);
 
     @Query("""
             SELECT COUNT(f) FROM FraudCheckRequestEntity f
