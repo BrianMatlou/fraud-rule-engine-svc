@@ -223,9 +223,9 @@ Every JWT must carry at least one realm role. Roles control what the bearer can 
 
 | Role             | Who holds it                  | Permitted operations                              |
 |------------------|-------------------------------|---------------------------------------------------|
-| `FRAUD_ADMIN`    | Operations / admin users      | Create, update, delete rules; query check results |
+| `FRAUD_ADMIN`    | Operations / admin users      | Create, update, delete rules; submit and query check results |
 | `FRAUD_ANALYST`  | Fraud analysts                | Read rules; query check results                   |
-| `FRAUD_CONSUMER` | Upstream service accounts     | Query check results only                          |
+| `FRAUD_CONSUMER` | Upstream service accounts     | Submit and query check results                    |
 
 `fraud-service-client` should hold `FRAUD_CONSUMER`. Assign it via the Admin REST API:
 
@@ -936,6 +936,43 @@ curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
 }
 ```
 
+### Submit a check synchronously
+
+Evaluate a transaction immediately instead of going through Kafka (requires `FRAUD_ADMIN` or `FRAUD_CONSUMER`):
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/fraud/check \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transactionId": "txn-sync-001",
+    "amount": 75000.00,
+    "currency": "ZAR",
+    "accountId": "acc-123",
+    "transactionTimestamp": "2026-01-15T10:30:00+02:00"
+  }' | jq
+```
+
+The call is **idempotent per `transactionId`**: if a result is already stored, it is returned as-is and the rules are not re-evaluated.
+
+### List checks for an account
+
+Returns a page of results for one account, newest first (requires `FRAUD_ADMIN`, `FRAUD_ANALYST` or `FRAUD_CONSUMER`):
+
+```bash
+curl -s "http://localhost:8080/api/v1/fraud/check?accountId=acc-123&page=0&size=20" \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+| Parameter   | Required | Default                      | Notes                                      |
+|-------------|----------|------------------------------|--------------------------------------------|
+| `accountId` | Yes      |                              | Account to list checks for                 |
+| `page`      | No       | `0`                          | Zero-based page index                      |
+| `size`      | No       | `20`                         | Page size                                  |
+| `sort`      | No       | `transactionTimestamp,desc`  | Spring format, e.g. `riskScore,desc`       |
+
+The response is a `Page`.
+
 **Outcome values:**
 
 | Outcome  | Condition       |
@@ -981,6 +1018,8 @@ curl -s http://localhost:8080/api/v1/fraud/check/txn-high-001 \
 
 | Method | Path                                    | Description                              | Auth     |
 |--------|-----------------------------------------|------------------------------------------|----------|
+| `POST` | `/api/v1/fraud/check`                   | Run a check synchronously (idempotent per `transactionId`) | Required |
+| `GET`  | `/api/v1/fraud/check?accountId=`        | Page of fraud check results for an account | Required |
 | `GET`  | `/api/v1/fraud/check/{transactionId}`   | Get fraud check result by transaction ID | Required |
 
 ### Create Rule — Request Body

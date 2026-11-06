@@ -6,6 +6,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 import za.co.capitecbank.domain.entity.FraudCheckRequestEntity;
 import za.co.capitecbank.domain.entity.RuleEntity;
@@ -189,7 +193,35 @@ class FraudCheckServiceTest {
                 .hasMessageContaining("tx-missing");
     }
 
-    // ---- helpers ----
+    @Test
+    void performCheck_returnsStoredResult_withoutEvaluating_whenTransactionAlreadyChecked() {
+        TransactionEventDto request = transactionEvent();
+        FraudCheckRequestEntity stored = savedEntity("tx-001", FraudOutcome.MEDIUM, 55);
+
+        when(checkRepository.findByTransactionId("tx-001")).thenReturn(Optional.of(stored));
+
+        FraudCheckResponse response = service.performCheck(request);
+
+        assertThat(response.riskScore()).isEqualTo(55);
+        verify(ruleRepository, never()).findByActiveTrue();
+        verify(checkRepository, never()).save(any());
+    }
+
+    @Test
+    void findChecksByAccountId_mapsRepositoryPageToResponses() {
+        Pageable pageable = PageRequest.of(0, 2);
+        FraudCheckRequestEntity first = savedEntity("tx-1", FraudOutcome.LOW, 5);
+        FraudCheckRequestEntity second = savedEntity("tx-2", FraudOutcome.HIGH, 85);
+
+        when(checkRepository.findByAccountId("ACC-001", pageable))
+                .thenReturn(new PageImpl<>(List.of(first, second), pageable, 5));
+
+        Page<FraudCheckResponse> page = service.findChecksByAccountId("ACC-001", pageable);
+
+        assertThat(page.getTotalElements()).isEqualTo(5);
+        assertThat(page.getContent()).extracting(FraudCheckResponse::transactionId).containsExactly("tx-1", "tx-2");
+    }
+
 
     private static RuleEntity ruleEntity(EvalMode mode, String type) {
         return RuleEntity.builder()
